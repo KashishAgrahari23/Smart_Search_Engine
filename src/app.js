@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const helmet = require("helmet");
 
 const productRoutes = require("./routes/productRoutes")
+const searchRoutes = require("./routes/SearchRoutes")
 const app = express();
 
 app.use(express.json());
@@ -19,6 +20,7 @@ app.use(helmet());
 // });
 
 app.use("/api/v1" , productRoutes)
+app.use("/api/v1" , searchRoutes)
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
