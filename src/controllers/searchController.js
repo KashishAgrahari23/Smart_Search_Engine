@@ -13,27 +13,20 @@ exports.searchProducts = async (req, res, next) => {
       });
     }
 
-    //  Parse query
-    const { normalizedQuery, intents, maxPrice, detectedBrand } =
-      parseQuery(query);
+    // 🔥 Parse Query
+    const {
+      normalizedQuery,
+      intents,
+      maxPrice,
+      detectedBrand,
+      detectedColor,
+      isAccessoryQuery,
+      wantsMoreStorage
+    } = parseQuery(query);
 
-    let products = await Product.find();
+    const products = await Product.find();
 
-    //  Filter by brand 
-    if (detectedBrand) {
-      products = products.filter((p) =>
-        p.brand.toLowerCase().includes(detectedBrand)
-      );
-    }
-
-    //  Filter by max price 
-    if (maxPrice) {
-      products = products.filter(
-        (p) => p.pricing.price <= maxPrice
-      );
-    }
-
-    //  Fuse search
+    // 🔥 Fuse search (text relevance first)
     const fuse = new Fuse(products, {
       keys: [
         { name: "title", weight: 0.4 },
@@ -41,33 +34,67 @@ exports.searchProducts = async (req, res, next) => {
         { name: "brand", weight: 0.2 },
         { name: "category", weight: 0.1 }
       ],
-      threshold: 0.3,
+      threshold: 0.4,
       includeScore: true,
     });
 
-    const results = fuse.search(normalizedQuery);
+    let results = fuse.search(normalizedQuery);
 
-    const filteredResults = results.filter(
-      (result) => result.score <= 0.3
-    );
+    // 🔥 Strong brand restriction
+    if (detectedBrand) {
+      results = results.filter(
+        (r) =>
+          r.item.title.toLowerCase().includes(detectedBrand) ||
+          r.item.brand.toLowerCase().includes(detectedBrand)
+      );
+    }
 
-    //  Ranking Logic
-    const rankedResults = filteredResults.map((result) => {
+    // 🔥 Category restriction (mobile vs accessory)
+    if (detectedBrand && !isAccessoryQuery) {
+      results = results.filter(
+        (r) => r.item.category === "mobile"
+      );
+    }
+
+    if (isAccessoryQuery) {
+      results = results.filter(
+        (r) => r.item.category === "accessory"
+      );
+    }
+
+    // 🔥 Price filtering
+    if (maxPrice) {
+      results = results.filter(
+        (r) => Number(r.item.pricing.price) <= maxPrice
+      );
+    }
+
+    // 🔥 Color filtering
+    if (detectedColor) {
+      results = results.filter(
+        (r) =>
+          r.item.title.toLowerCase().includes(detectedColor) ||
+          r.item.metadata?.color?.toLowerCase().includes(detectedColor)
+      );
+    }
+
+    // 🔥 Ranking logic
+    const rankedResults = results.map((result) => {
       const p = result.item;
 
       let businessScore = 0;
 
-      // Boost rating
+      // Rating boost
       businessScore += (p.metrics?.rating || 0) * 2;
 
-      // Boost stock availability
+      // Stock boost / penalty
       if (p.inventory?.stock > 0) {
         businessScore += 5;
       } else {
-        businessScore -= 5; 
+        businessScore -= 5;
       }
 
-      // Cheap intent boost (lower price = higher score)
+      // Cheap intent boost
       if (intents.cheap) {
         businessScore += (100000 - p.pricing.price) / 10000;
       }
@@ -77,17 +104,23 @@ exports.searchProducts = async (req, res, next) => {
         businessScore += (p.metadata.launchYear - 2020);
       }
 
-      const relevanceScore = (1 - result.score) * 10;
+      // Storage boosting
+      if (wantsMoreStorage && p.metadata?.storage) {
+        const storageValue = parseInt(p.metadata.storage);
+        if (!isNaN(storageValue)) {
+          businessScore += storageValue / 64;
+        }
+      }
 
-      const finalScore = relevanceScore + businessScore;
+      const relevanceScore = (1 - result.score) * 10;
 
       return {
         item: p,
-        finalScore,
+        finalScore: relevanceScore + businessScore,
       };
     });
 
-    // Sort by finalScore
+    // 🔥 Sort
     rankedResults.sort((a, b) => b.finalScore - a.finalScore);
 
     const formatted = rankedResults.map(({ item }) => ({

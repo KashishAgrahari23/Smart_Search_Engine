@@ -1,17 +1,21 @@
 const intentDictionary = {
-  cheap: ["cheap", "sasta", "budget", "low", "under"],
+  cheap: ["cheap", "sasta", "sastha", "budget", "low", "under"],
   latest: ["latest", "new", "newest", "recent"]
 };
 
-const brandList = ["iphone", "samsung", "redmi", "apple"];
+const brandList = ["iphone", "samsung", "redmi"];
 
+const colorList = ["red", "blue", "black", "white"];
+
+const accessoryKeywords = ["cover", "case", "charger", "protector"];
+
+// 🔹 Extract price (50k / 50000)
 function extractPrice(query) {
-  // match patterns like 50000 or 50k
-  const numberMatch = query.match(/\d+k|\d{4,6}/);
+  const match = query.match(/\d+k|\d{4,6}/);
 
-  if (!numberMatch) return null;
+  if (!match) return null;
 
-  let value = numberMatch[0].toLowerCase();
+  let value = match[0].toLowerCase();
 
   if (value.includes("k")) {
     return parseInt(value.replace("k", "")) * 1000;
@@ -23,24 +27,24 @@ function extractPrice(query) {
 function parseQuery(rawQuery) {
   const normalizedQuery = rawQuery.toLowerCase().trim();
 
+  // 🔹 Intent detection
   const intents = {
     cheap: false,
     latest: false
   };
 
-  // Detect intent
-  Object.keys(intentDictionary).forEach((key) => {
-    intentDictionary[key].forEach((word) => {
+  Object.keys(intentDictionary).forEach((intentKey) => {
+    intentDictionary[intentKey].forEach((word) => {
       if (normalizedQuery.includes(word)) {
-        intents[key] = true;
+        intents[intentKey] = true;
       }
     });
   });
 
-  // Extract price
+  // 🔹 Price detection
   const maxPrice = extractPrice(normalizedQuery);
 
-  // Detect brand
+  // 🔹 Brand detection
   let detectedBrand = null;
   brandList.forEach((brand) => {
     if (normalizedQuery.includes(brand)) {
@@ -48,11 +52,35 @@ function parseQuery(rawQuery) {
     }
   });
 
+  // 🔹 Color detection
+  let detectedColor = null;
+  colorList.forEach((color) => {
+    if (normalizedQuery.includes(color)) {
+      detectedColor = color;
+    }
+  });
+
+  // 🔹 Accessory intent
+  const isAccessoryQuery = accessoryKeywords.some((word) =>
+    normalizedQuery.includes(word)
+  );
+
+  // 🔹 Storage intent
+  const wantsMoreStorage = normalizedQuery.includes("more storage");
+
+  // 🔹 Clean query for Fuse (remove price numbers)
+  const cleanedQuery = normalizedQuery
+    .replace(/\d+k|\d{4,6}/g, "")
+    .trim();
+
   return {
-    normalizedQuery,
+    normalizedQuery: cleanedQuery,
     intents,
     maxPrice,
-    detectedBrand
+    detectedBrand,
+    detectedColor,
+    isAccessoryQuery,
+    wantsMoreStorage
   };
 }
 
