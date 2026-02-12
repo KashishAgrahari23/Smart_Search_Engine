@@ -4,7 +4,7 @@ const Fuse = require("fuse.js");
 const { parseWithLLM } = require("../services/llmParser");
 const { parseQuery } = require("../services/queryParser");
 
-// 🔥 Helper to extract model number (for "latest" intent)
+// Extract model number for "latest" intent
 function extractModelNumber(title) {
   const match = title.match(/\d+/);
   return match ? parseInt(match[0]) : 0;
@@ -12,7 +12,7 @@ function extractModelNumber(title) {
 
 exports.searchProducts = async (req, res, next) => {
   try {
-    const { query } = req.query;
+    const { query, page = 1, limit = 10 } = req.query;
 
     if (!query) {
       return res.status(400).json({
@@ -21,17 +21,22 @@ exports.searchProducts = async (req, res, next) => {
       });
     }
 
-    // 🔥 Step 1: Try LLM parsing
+    const pageNumber = parseInt(page);
+    const limitNumber = parseInt(limit);
+
+    // 🔥 Step 1: LLM parsing
     let structuredQuery = await parseWithLLM(query);
 
-    // 🔥 Step 2: Fallback if LLM fails
     if (!structuredQuery) {
       structuredQuery = parseQuery(query);
+      console.log("Fallback parser used:", structuredQuery);
+    } else {
+      console.log("LLM Structured Output:", structuredQuery);
     }
 
     const products = await Product.find();
 
-    // 🔥 Step 3: Fuse fuzzy search (always for typo handling)
+    // 🔥 Step 2: Fuse search
     const fuse = new Fuse(products, {
       keys: [
         { name: "title", weight: 0.4 },
@@ -45,9 +50,8 @@ exports.searchProducts = async (req, res, next) => {
 
     let results = fuse.search(query.toLowerCase().trim());
 
-    // 🔥 Step 4: Structured filtering
+    // 🔥 Step 3: Filtering
 
-    // Brand filter
     if (structuredQuery.brand) {
       results = results.filter((r) =>
         r.item.brand
@@ -56,14 +60,12 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    // Category filter
     if (structuredQuery.category) {
       results = results.filter(
         (r) => r.item.category === structuredQuery.category
       );
     }
 
-    // Max price filter
     if (structuredQuery.maxPrice) {
       results = results.filter(
         (r) =>
@@ -71,7 +73,6 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    // Color filter
     if (structuredQuery.color) {
       results = results.filter(
         (r) =>
@@ -84,7 +85,6 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    // Storage filter
     if (structuredQuery.minStorageGB) {
       results = results.filter((r) => {
         const storage = parseInt(r.item.metadata?.storage);
@@ -92,7 +92,7 @@ exports.searchProducts = async (req, res, next) => {
       });
     }
 
-    // 🔥 Step 5: Ranking logic
+    // 🔥 Step 4: Ranking
 
     if (structuredQuery.intent === "cheap") {
       results.sort(
@@ -110,7 +110,6 @@ exports.searchProducts = async (req, res, next) => {
     }
 
     else {
-      // Default ranking: relevance + rating
       results.sort(
         (a, b) =>
           (b.item.metrics?.rating || 0) -
@@ -118,7 +117,17 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    const formatted = results.map(({ item }) => ({
+    // 🔥 Step 5: Pagination
+
+    const totalResults = results.length;
+    const totalPages = Math.ceil(totalResults / limitNumber);
+
+    const startIndex = (pageNumber - 1) * limitNumber;
+    const endIndex = startIndex + limitNumber;
+
+    const paginatedResults = results.slice(startIndex, endIndex);
+
+    const formatted = paginatedResults.map(({ item }) => ({
       productId: item._id,
       title: item.title,
       description: item.description,
@@ -129,6 +138,10 @@ exports.searchProducts = async (req, res, next) => {
     }));
 
     res.status(200).json({
+      page: pageNumber,
+      limit: limitNumber,
+      totalResults,
+      totalPages,
       data: formatted,
     });
 
