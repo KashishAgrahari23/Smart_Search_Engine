@@ -1,6 +1,14 @@
 const Product = require("../models/productModel");
 const Fuse = require("fuse.js");
+
+const { parseWithLLM } = require("../services/llmParser");
 const { parseQuery } = require("../services/queryParser");
+
+// 🔥 Helper to extract model number (for "latest" intent)
+function extractModelNumber(title) {
+  const match = title.match(/\d+/);
+  return match ? parseInt(match[0]) : 0;
+}
 
 exports.searchProducts = async (req, res, next) => {
   try {
@@ -13,20 +21,17 @@ exports.searchProducts = async (req, res, next) => {
       });
     }
 
-    // 🔥 Parse Query
-    const {
-      normalizedQuery,
-      intents,
-      maxPrice,
-      detectedBrand,
-      detectedColor,
-      isAccessoryQuery,
-      wantsMoreStorage
-    } = parseQuery(query);
+    // 🔥 Step 1: Try LLM parsing
+    let structuredQuery = await parseWithLLM(query);
+
+    // 🔥 Step 2: Fallback if LLM fails
+    if (!structuredQuery) {
+      structuredQuery = parseQuery(query);
+    }
 
     const products = await Product.find();
 
-    // 🔥 Fuse search (text relevance first)
+    // 🔥 Step 3: Fuse fuzzy search (always for typo handling)
     const fuse = new Fuse(products, {
       keys: [
         { name: "title", weight: 0.4 },
@@ -38,92 +43,82 @@ exports.searchProducts = async (req, res, next) => {
       includeScore: true,
     });
 
-    let results = fuse.search(normalizedQuery);
+    let results = fuse.search(query.toLowerCase().trim());
 
-    // 🔥 Strong brand restriction
-    if (detectedBrand) {
+    // 🔥 Step 4: Structured filtering
+
+    // Brand filter
+    if (structuredQuery.brand) {
+      results = results.filter((r) =>
+        r.item.brand
+          .toLowerCase()
+          .includes(structuredQuery.brand.toLowerCase())
+      );
+    }
+
+    // Category filter
+    if (structuredQuery.category) {
+      results = results.filter(
+        (r) => r.item.category === structuredQuery.category
+      );
+    }
+
+    // Max price filter
+    if (structuredQuery.maxPrice) {
       results = results.filter(
         (r) =>
-          r.item.title.toLowerCase().includes(detectedBrand) ||
-          r.item.brand.toLowerCase().includes(detectedBrand)
+          Number(r.item.pricing.price) <= structuredQuery.maxPrice
       );
     }
 
-    // 🔥 Category restriction (mobile vs accessory)
-    if (detectedBrand && !isAccessoryQuery) {
-      results = results.filter(
-        (r) => r.item.category === "mobile"
-      );
-    }
-
-    if (isAccessoryQuery) {
-      results = results.filter(
-        (r) => r.item.category === "accessory"
-      );
-    }
-
-    // 🔥 Price filtering
-    if (maxPrice) {
-      results = results.filter(
-        (r) => Number(r.item.pricing.price) <= maxPrice
-      );
-    }
-
-    // 🔥 Color filtering
-    if (detectedColor) {
+    // Color filter
+    if (structuredQuery.color) {
       results = results.filter(
         (r) =>
-          r.item.title.toLowerCase().includes(detectedColor) ||
-          r.item.metadata?.color?.toLowerCase().includes(detectedColor)
+          r.item.title
+            .toLowerCase()
+            .includes(structuredQuery.color.toLowerCase()) ||
+          r.item.metadata?.color
+            ?.toLowerCase()
+            .includes(structuredQuery.color.toLowerCase())
       );
     }
 
-    // 🔥 Ranking logic
-    const rankedResults = results.map((result) => {
-      const p = result.item;
+    // Storage filter
+    if (structuredQuery.minStorageGB) {
+      results = results.filter((r) => {
+        const storage = parseInt(r.item.metadata?.storage);
+        return storage >= structuredQuery.minStorageGB;
+      });
+    }
 
-      let businessScore = 0;
+    // 🔥 Step 5: Ranking logic
 
-      // Rating boost
-      businessScore += (p.metrics?.rating || 0) * 2;
+    if (structuredQuery.intent === "cheap") {
+      results.sort(
+        (a, b) =>
+          a.item.pricing.price - b.item.pricing.price
+      );
+    }
 
-      // Stock boost / penalty
-      if (p.inventory?.stock > 0) {
-        businessScore += 5;
-      } else {
-        businessScore -= 5;
-      }
+    else if (structuredQuery.intent === "latest") {
+      results.sort(
+        (a, b) =>
+          extractModelNumber(b.item.title) -
+          extractModelNumber(a.item.title)
+      );
+    }
 
-      // Cheap intent boost
-      if (intents.cheap) {
-        businessScore += (100000 - p.pricing.price) / 10000;
-      }
+    else {
+      // Default ranking: relevance + rating
+      results.sort(
+        (a, b) =>
+          (b.item.metrics?.rating || 0) -
+          (a.item.metrics?.rating || 0)
+      );
+    }
 
-      // Latest intent boost
-      if (intents.latest && p.metadata?.launchYear) {
-        businessScore += (p.metadata.launchYear - 2020);
-      }
-
-      // Storage boosting
-      if (wantsMoreStorage && p.metadata?.storage) {
-        const storageValue = parseInt(p.metadata.storage);
-        if (!isNaN(storageValue)) {
-          businessScore += storageValue / 64;
-        }
-      }
-
-      const relevanceScore = (1 - result.score) * 10;
-
-      return {
-        item: p,
-        finalScore: relevanceScore + businessScore,
-      };
-    });
-
-    // 🔥 Sort
-    rankedResults.sort((a, b) => b.finalScore - a.finalScore);
-
-    const formatted = rankedResults.map(({ item }) => ({
+    const formatted = results.map(({ item }) => ({
       productId: item._id,
       title: item.title,
       description: item.description,
