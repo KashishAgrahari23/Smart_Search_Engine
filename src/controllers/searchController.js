@@ -149,3 +149,117 @@ exports.searchProducts = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getFacets = async (req, res, next) => {
+  try {
+    const { query } = req.query;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query is required",
+      });
+    }
+
+    let structuredQuery = await parseWithLLM(query);
+
+    if (!structuredQuery) {
+      structuredQuery = parseQuery(query);
+    }
+
+    const products = await Product.find();
+
+    const fuse = new Fuse(products, {
+      keys: [
+        { name: "title", weight: 0.4 },
+        { name: "description", weight: 0.3 },
+        { name: "brand", weight: 0.2 },
+        { name: "category", weight: 0.1 }
+      ],
+      threshold: 0.4,
+      includeScore: true,
+    });
+
+    let results = fuse.search(query.toLowerCase().trim());
+
+    // Apply same filters as search API
+    if (structuredQuery.brand) {
+      results = results.filter((r) =>
+        r.item.brand
+          .toLowerCase()
+          .includes(structuredQuery.brand.toLowerCase())
+      );
+    }
+
+    if (structuredQuery.category) {
+      results = results.filter(
+        (r) => r.item.category === structuredQuery.category
+      );
+    }
+
+    if (structuredQuery.maxPrice) {
+      results = results.filter(
+        (r) =>
+          Number(r.item.pricing.price) <= structuredQuery.maxPrice
+      );
+    }
+
+    const items = results.map(r => r.item);
+
+    // 🔥 Build facets
+
+    const brandMap = {};
+    const colorMap = {};
+    const storageMap = {};
+
+    let minPrice = Infinity;
+    let maxPrice = 0;
+
+    items.forEach((item) => {
+      // Brand
+      brandMap[item.brand] = (brandMap[item.brand] || 0) + 1;
+
+      // Color
+      const color = item.metadata?.color;
+      if (color) {
+        colorMap[color] = (colorMap[color] || 0) + 1;
+      }
+
+      // Storage
+      const storage = item.metadata?.storage;
+      if (storage) {
+        storageMap[storage] = (storageMap[storage] || 0) + 1;
+      }
+
+      // Price range
+      const price = item.pricing.price;
+      if (price < minPrice) minPrice = price;
+      if (price > maxPrice) maxPrice = price;
+    });
+
+    const response = {
+      totalResults: items.length,
+      brands: Object.entries(brandMap).map(([name, count]) => ({
+        name,
+        count
+      })),
+      colors: Object.entries(colorMap).map(([name, count]) => ({
+        name,
+        count
+      })),
+      storageOptions: Object.entries(storageMap).map(([value, count]) => ({
+        value,
+        count
+      })),
+      priceRange: {
+        min: minPrice === Infinity ? 0 : minPrice,
+        max: maxPrice
+      }
+    };
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    next(error);
+  }
+};
