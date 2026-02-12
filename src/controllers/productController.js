@@ -1,27 +1,67 @@
 const Product = require("../models/productModel");
-//Create Product
+
+// Create Product
 exports.createProduct = async (req, res, next) => {
   try {
-    const product = await Product.create(req.body);
+    const {
+      title,
+      description,
+      rating,
+      stock,
+      price,
+      mrp,
+      currency,
+      brand,
+      category
+    } = req.body;
+
+    if (!title || !description || !price || !mrp || stock === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    const productData = {
+      title,
+      description,
+      brand: brand || "Unknown",
+      category: category || "mobile",
+
+      pricing: {
+        price,
+        mrp,
+        currency: currency || "INR",
+      },
+
+      metrics: {
+        rating: rating || 0,
+      },
+
+      inventory: {
+        stock,
+      },
+    };
+
+    const product = await Product.create(productData);
 
     res.status(201).json({
-      success: true,
       productId: product._id,
     });
+
   } catch (error) {
     next(error);
   }
 };
 
-// Update Product Metadata
 exports.updateProductMetadata = async (req, res, next) => {
   try {
-    const { productId, metadata } = req.body;
+    const { productId, Metadata } = req.body;
 
-    if (!productId || !metadata) {
+    if (!productId || !Metadata) {
       return res.status(400).json({
         success: false,
-        message: "productId and metadata are required",
+        message: "productId and Metadata are required",
       });
     }
 
@@ -36,16 +76,16 @@ exports.updateProductMetadata = async (req, res, next) => {
 
     product.metadata = {
       ...product.metadata,
-      ...metadata,
+      ...Metadata,
     };
 
     await product.save();
 
     res.status(200).json({
-      success: true,
       productId: product._id,
-      metadata: product.metadata,
+      Metadata: product.metadata,
     });
+
   } catch (error) {
     next(error);
   }
