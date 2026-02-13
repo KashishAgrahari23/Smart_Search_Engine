@@ -29,6 +29,7 @@ exports.searchProducts = async (req, res, next) => {
     }
 
     const products = await Product.find();
+    console.log("Total products in DB:", products.length);
 
     // 🔥 Step 2 — Fuse Search (PRIMARY text matching engine)
 
