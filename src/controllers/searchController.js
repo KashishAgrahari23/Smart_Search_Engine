@@ -4,12 +4,6 @@ const Fuse = require("fuse.js");
 const { parseWithLLM } = require("../services/llmParser");
 const { parseQuery } = require("../services/queryParser");
 
-// Extract model number for "latest" sorting
-function extractModelNumber(title) {
-  const match = title.match(/\d+/);
-  return match ? parseInt(match[0]) : 0;
-}
-
 exports.searchProducts = async (req, res, next) => {
   try {
     const { query, page = 1, limit = 10 } = req.query;
@@ -36,7 +30,8 @@ exports.searchProducts = async (req, res, next) => {
 
     const products = await Product.find();
 
-    // 🔥 Step 2 — Use better search text for Fuse
+    // 🔥 Step 2 — Fuse Search (PRIMARY text matching engine)
+
     const searchText =
       structuredQuery.product ||
       structuredQuery.brand ||
@@ -44,29 +39,33 @@ exports.searchProducts = async (req, res, next) => {
 
     const fuse = new Fuse(products, {
       keys: [
-        { name: "title", weight: 0.4 },
-        { name: "description", weight: 0.3 },
-        { name: "brand", weight: 0.2 },
-        { name: "category", weight: 0.1 }
+        { name: "title", weight: 0.5 },
+        { name: "brand", weight: 0.3 },
+        { name: "description", weight: 0.2 },
       ],
       threshold: 0.4,
+      ignoreLocation: true,
       includeScore: true,
+      minMatchCharLength: 2,
     });
 
     let results = fuse.search(searchText.toLowerCase().trim());
+    
+    results = results.filter((r) => r.score <= 0.5);
+    // 🔥 Loose fallback for heavy typos
+    if (results.length === 0) {
+      const looseFuse = new Fuse(products, {
+        keys: ["title", "brand"],
+        threshold: 0.8,
+        ignoreLocation: true,
+        includeScore: true,
+      });
 
-    // 🔥 Step 3 — Smart Filtering
-
-    // Brand / Product filter (safe)
-    if (structuredQuery.brand || structuredQuery.product) {
-      const keyword =
-        structuredQuery.brand || structuredQuery.product;
-
-      results = results.filter((r) =>
-        r.item.title.toLowerCase().includes(keyword.toLowerCase()) ||
-        r.item.brand.toLowerCase().includes(keyword.toLowerCase())
-      );
+      results = looseFuse.search(searchText.toLowerCase().trim());
+       results = results.filter((r) => r.score <= 0.7);
     }
+
+    // 🔥 Step 3 — Business Filters (NOT text filters)
 
     // Category filter
     if (structuredQuery.category) {
@@ -83,15 +82,16 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    // Safe Color filter (only apply if matches exist)
+    // Color filter
     if (structuredQuery.color) {
-      const colorFiltered = results.filter((r) =>
-        r.item.title
-          .toLowerCase()
-          .includes(structuredQuery.color.toLowerCase()) ||
-        r.item.metadata?.color
-          ?.toLowerCase()
-          .includes(structuredQuery.color.toLowerCase())
+      const colorFiltered = results.filter(
+        (r) =>
+          r.item.title
+            .toLowerCase()
+            .includes(structuredQuery.color.toLowerCase()) ||
+          r.item.metadata?.color
+            ?.toLowerCase()
+            .includes(structuredQuery.color.toLowerCase())
       );
 
       if (colorFiltered.length > 0) {
@@ -123,8 +123,8 @@ exports.searchProducts = async (req, res, next) => {
     else if (structuredQuery.intent === "latest") {
       results.sort(
         (a, b) =>
-          extractModelNumber(b.item.title) -
-          extractModelNumber(a.item.title)
+          new Date(b.item.metadata?.releaseDate || 0) -
+          new Date(a.item.metadata?.releaseDate || 0)
       );
     }
 

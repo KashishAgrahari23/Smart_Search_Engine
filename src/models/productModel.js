@@ -76,7 +76,9 @@ const productSchema = new mongoose.Schema(
       color: String,
       brightness: String,
       processor: String,
-      launchYear: Number,
+      releaseDate: {
+        type: Date,
+      },
     },
 
     searchableText: {
@@ -87,7 +89,7 @@ const productSchema = new mongoose.Schema(
 );
 
 // Pre-save middleware to prepare searchable text
-productSchema.pre("save",  () => {
+productSchema.pre("save", function (next)  {
   this.searchableText = `
     ${this.title}
     ${this.description}
@@ -97,6 +99,8 @@ productSchema.pre("save",  () => {
     ${this.metadata?.storage || ""}
     ${this.metadata?.color || ""}
   `.toLowerCase();
+
+  next()
 });
 
 module.exports = mongoose.model("Product", productSchema);
