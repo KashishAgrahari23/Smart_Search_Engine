@@ -12,12 +12,12 @@ app.use(cors());
 app.use(morgan("dev"));
 app.use(helmet());
 
-// app.get("/", (req, res) => {
-//   res.status(200).json({
-//     success: true,
-//     message: "Smart_SearchEngine API is running ",
-//   });
-// });
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Smart_SearchEngine API is running ",
+  });
+});
 
 app.use("/api/v1" , productRoutes)
 app.use("/api/v1" , searchRoutes)
