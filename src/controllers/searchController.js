@@ -4,7 +4,7 @@ const Fuse = require("fuse.js");
 const { parseWithLLM } = require("../services/llmParser");
 const { parseQuery } = require("../services/queryParser");
 
-// Extract model number for "latest" intent
+// Extract model number for "latest" sorting
 function extractModelNumber(title) {
   const match = title.match(/\d+/);
   return match ? parseInt(match[0]) : 0;
@@ -24,7 +24,7 @@ exports.searchProducts = async (req, res, next) => {
     const pageNumber = parseInt(page);
     const limitNumber = parseInt(limit);
 
-    // 🔥 Step 1: LLM parsing
+    // 🔥 Step 1 — LLM Parsing (Hybrid)
     let structuredQuery = await parseWithLLM(query);
 
     if (!structuredQuery) {
@@ -36,7 +36,12 @@ exports.searchProducts = async (req, res, next) => {
 
     const products = await Product.find();
 
-    // 🔥 Step 2: Fuse search
+    // 🔥 Step 2 — Use better search text for Fuse
+    const searchText =
+      structuredQuery.product ||
+      structuredQuery.brand ||
+      query;
+
     const fuse = new Fuse(products, {
       keys: [
         { name: "title", weight: 0.4 },
@@ -48,24 +53,29 @@ exports.searchProducts = async (req, res, next) => {
       includeScore: true,
     });
 
-    let results = fuse.search(query.toLowerCase().trim());
+    let results = fuse.search(searchText.toLowerCase().trim());
 
-    // 🔥 Step 3: Filtering
+    // 🔥 Step 3 — Smart Filtering
 
-    if (structuredQuery.brand) {
+    // Brand / Product filter (safe)
+    if (structuredQuery.brand || structuredQuery.product) {
+      const keyword =
+        structuredQuery.brand || structuredQuery.product;
+
       results = results.filter((r) =>
-        r.item.brand
-          .toLowerCase()
-          .includes(structuredQuery.brand.toLowerCase())
+        r.item.title.toLowerCase().includes(keyword.toLowerCase()) ||
+        r.item.brand.toLowerCase().includes(keyword.toLowerCase())
       );
     }
 
+    // Category filter
     if (structuredQuery.category) {
       results = results.filter(
         (r) => r.item.category === structuredQuery.category
       );
     }
 
+    // Price filter
     if (structuredQuery.maxPrice) {
       results = results.filter(
         (r) =>
@@ -73,26 +83,35 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
+    // Safe Color filter (only apply if matches exist)
     if (structuredQuery.color) {
-      results = results.filter(
-        (r) =>
-          r.item.title
-            .toLowerCase()
-            .includes(structuredQuery.color.toLowerCase()) ||
-          r.item.metadata?.color
-            ?.toLowerCase()
-            .includes(structuredQuery.color.toLowerCase())
+      const colorFiltered = results.filter((r) =>
+        r.item.title
+          .toLowerCase()
+          .includes(structuredQuery.color.toLowerCase()) ||
+        r.item.metadata?.color
+          ?.toLowerCase()
+          .includes(structuredQuery.color.toLowerCase())
       );
+
+      if (colorFiltered.length > 0) {
+        results = colorFiltered;
+      }
     }
 
+    // Storage filter
     if (structuredQuery.minStorageGB) {
-      results = results.filter((r) => {
+      const storageFiltered = results.filter((r) => {
         const storage = parseInt(r.item.metadata?.storage);
         return storage >= structuredQuery.minStorageGB;
       });
+
+      if (storageFiltered.length > 0) {
+        results = storageFiltered;
+      }
     }
 
-    // 🔥 Step 4: Ranking
+    // 🔥 Step 4 — Ranking
 
     if (structuredQuery.intent === "cheap") {
       results.sort(
@@ -110,6 +129,7 @@ exports.searchProducts = async (req, res, next) => {
     }
 
     else {
+      // Default ranking by rating
       results.sort(
         (a, b) =>
           (b.item.metrics?.rating || 0) -
@@ -117,7 +137,7 @@ exports.searchProducts = async (req, res, next) => {
       );
     }
 
-    // 🔥 Step 5: Pagination
+    // 🔥 Step 5 — Pagination
 
     const totalResults = results.length;
     const totalPages = Math.ceil(totalResults / limitNumber);
