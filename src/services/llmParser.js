@@ -1,25 +1,21 @@
-const OpenAI = require("openai");
+const Groq = require("groq-sdk");
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 async function parseWithLLM(query) {
   try {
-    const completion = await Promise.race([
-      openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: `
 You are a query parser for an electronics e-commerce platform.
 
-Extract structured information from the user query.
-
-Return ONLY valid JSON with these fields:
+Return ONLY valid JSON with:
 {
   "brand": string | null,
   "product": string | null,
@@ -33,25 +29,22 @@ Return ONLY valid JSON with these fields:
 
 If not present, use null.
 `
-          },
-          {
-            role: "user",
-            content: query
-          }
-        ],
-      }),
+        },
+        {
+          role: "user",
+          content: query
+        }
+      ],
+    });
 
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("LLM Timeout")), 9000)
-      )
-    ]);
+    const content = completion.choices[0].message.content;
 
-    const structured = JSON.parse(completion.choices[0].message.content);
+    const structured = JSON.parse(content);
 
     return structured;
 
   } catch (error) {
-    console.error("LLM Parsing failed:", error.message);
+    console.error("Groq Parsing failed:", error.message);
     return null;
   }
 }
