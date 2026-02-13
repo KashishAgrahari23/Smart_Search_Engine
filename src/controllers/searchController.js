@@ -169,3 +169,102 @@ exports.searchProducts = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getSearchFacets = async (req, res, next) => {
+  try {
+    const { query } = req.query;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query is required",
+      });
+    }
+
+    // 🔥 Parse query
+    let structuredQuery = await parseWithLLM(query);
+
+    if (!structuredQuery) {
+      structuredQuery = parseQuery(query);
+    }
+
+    const products = await Product.find();
+
+    // 🔥 Fuse search (same config as search API)
+    const searchText =
+      structuredQuery.product ||
+      structuredQuery.brand ||
+      query;
+
+    const fuse = new Fuse(products, {
+      keys: [
+        { name: "title", weight: 0.7 },
+        { name: "brand", weight: 0.1 },
+        { name: "description", weight: 0.2 },
+      ],
+      threshold: 0.4,
+      ignoreLocation: true,
+      includeScore: true,
+    });
+
+    let results = fuse.search(searchText.toLowerCase().trim());
+
+    results = results.filter((r) => r.score <= 0.4);
+
+    const items = results.map((r) => r.item);
+
+    // 🔥 Build facets from filtered results
+
+    const brandMap = {};
+    const colorMap = {};
+    const storageMap = {};
+
+    let minPrice = Infinity;
+    let maxPrice = 0;
+
+    items.forEach((item) => {
+      // Brand
+      brandMap[item.brand] =
+        (brandMap[item.brand] || 0) + 1;
+
+      // Color
+      const color = item.metadata?.color;
+      if (color) {
+        colorMap[color] =
+          (colorMap[color] || 0) + 1;
+      }
+
+      // Storage
+      const storage = item.metadata?.storage;
+      if (storage) {
+        storageMap[storage] =
+          (storageMap[storage] || 0) + 1;
+      }
+
+      // Price range
+      const price = item.pricing.price;
+      if (price < minPrice) minPrice = price;
+      if (price > maxPrice) maxPrice = price;
+    });
+
+    res.status(200).json({
+      totalResults: items.length,
+      brands: Object.entries(brandMap).map(
+        ([name, count]) => ({ name, count })
+      ),
+      colors: Object.entries(colorMap).map(
+        ([name, count]) => ({ name, count })
+      ),
+      storageOptions: Object.entries(storageMap).map(
+        ([value, count]) => ({ value, count })
+      ),
+      priceRange: {
+        min: minPrice === Infinity ? 0 : minPrice,
+        max: maxPrice,
+      },
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
