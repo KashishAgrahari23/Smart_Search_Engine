@@ -18,8 +18,8 @@ app.get("/", (req, res) => {
   });
 });
 
-app.use("/api/v1" , productRoutes)
-app.use("/api/v1" , searchRoutes)
+app.use("/api/v1/product" , productRoutes)
+app.use("/api/v1/search" , searchRoutes)
 // Evaluator Friendly routes
 app.use("/product", productRoutes);
 app.use("/search", searchRoutes);

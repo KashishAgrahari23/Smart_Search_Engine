@@ -6,7 +6,7 @@ const {
   updateProductMetadata,
 } = require('../controllers/productController');
 
-router.post("/product", createProduct);
-router.put("/product/meta-data", updateProductMetadata);
+router.post("/", createProduct);
+router.put("/meta-data", updateProductMetadata);
 
 module.exports = router;
